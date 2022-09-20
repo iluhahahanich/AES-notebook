@@ -50,9 +50,9 @@ func Login() error {
 	user := ReadWithHint(r, "Username: ")
 	password := ReadWithHint(r, "Password: ")
 
-	rsaPrivate, _ = utils.GenerateKeyPair(2048)
+	rsaPrivate = utils.GenerateKey(2048)
 
-	body := bytes.NewBuffer(utils.PublicKeyToBytes(&rsaPrivate.PublicKey))
+	body := bytes.NewBufferString(utils.PublicKeyToString(&rsaPrivate.PublicKey))
 
 	req, err := http.NewRequest("GET", serverAddr+"/login", body)
 	if err != nil {
@@ -77,7 +77,6 @@ func Login() error {
 
 	log.Println("authorized")
 	sessionKey = utils.DecryptWithPrivateKey(body.Bytes(), rsaPrivate)
-	fmt.Println("Session Key: ", sessionKey)
 
 	return nil
 }

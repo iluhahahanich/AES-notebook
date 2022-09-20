@@ -98,7 +98,7 @@ func HandleLogin(w http.ResponseWriter, r *http.Request) {
 	s := session{
 		user:       user.Name,
 		expiration: time.Now().Add(time.Minute),
-		rsaKey:     utils.BytesToPublicKey(rsaPubStr.Bytes()),
+		rsaKey:     utils.StringToPublicKey(rsaPubStr.String()),
 		sessionKey: make([]byte, 16),
 	}
 	rand.Read(s.sessionKey)

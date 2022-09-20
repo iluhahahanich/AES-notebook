@@ -3,107 +3,51 @@ package utils
 import (
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/sha512"
-	"crypto/x509"
-	"encoding/pem"
+	"fmt"
 	"log"
+	"math/big"
+	"strconv"
+	"strings"
 )
 
-func GenerateKeyPair(bits int) (*rsa.PrivateKey, *rsa.PublicKey) {
-	privkey, err := rsa.GenerateKey(rand.Reader, bits)
+func Unwrap[T any](val T, err error) T {
 	if err != nil {
 		log.Fatal(err)
 	}
-	return privkey, &privkey.PublicKey
+	return val
 }
 
-// PrivateKeyToBytes private key to bytes
-func PrivateKeyToBytes(priv *rsa.PrivateKey) []byte {
-	privBytes := pem.EncodeToMemory(
-		&pem.Block{
-			Type:  "RSA PRIVATE KEY",
-			Bytes: x509.MarshalPKCS1PrivateKey(priv),
-		},
-	)
-
-	return privBytes
-}
-
-// PublicKeyToBytes public key to bytes
-func PublicKeyToBytes(pub *rsa.PublicKey) []byte {
-	pubASN1, err := x509.MarshalPKIXPublicKey(pub)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	pubBytes := pem.EncodeToMemory(&pem.Block{
-		Type:  "RSA PUBLIC KEY",
-		Bytes: pubASN1,
-	})
-
-	return pubBytes
-}
-
-// BytesToPrivateKey bytes to private key
-func BytesToPrivateKey(priv []byte) *rsa.PrivateKey {
-	block, _ := pem.Decode(priv)
-	enc := x509.IsEncryptedPEMBlock(block)
-	b := block.Bytes
-	var err error
-	if enc {
-		log.Println("is encrypted pem block")
-		b, err = x509.DecryptPEMBlock(block, nil)
-		if err != nil {
-			log.Fatal(err)
-		}
-	}
-	key, err := x509.ParsePKCS1PrivateKey(b)
-	if err != nil {
-		log.Fatal(err)
-	}
-	return key
-}
-
-// BytesToPublicKey bytes to public key
-func BytesToPublicKey(pub []byte) *rsa.PublicKey {
-	block, _ := pem.Decode(pub)
-	enc := x509.IsEncryptedPEMBlock(block)
-	b := block.Bytes
-	var err error
-	if enc {
-		log.Println("is encrypted pem block")
-		b, err = x509.DecryptPEMBlock(block, nil)
-		if err != nil {
-			log.Fatal(err)
-		}
-	}
-	ifc, err := x509.ParsePKIXPublicKey(b)
-	if err != nil {
-		log.Fatal(err)
-	}
-	key, ok := ifc.(*rsa.PublicKey)
+func Assert(ok bool, msg string) {
 	if !ok {
-		log.Fatal("not ok")
+		log.Fatalf(msg)
 	}
-	return key
 }
 
-// EncryptWithPublicKey encrypts data with public key
+func GenerateKey(bits int) *rsa.PrivateKey {
+	return Unwrap(rsa.GenerateKey(rand.Reader, bits))
+}
+
+func PublicKeyToString(pub *rsa.PublicKey) string {
+	return pub.N.String() + "\t" + fmt.Sprint(pub.E)
+}
+
+func StringToPublicKey(str string) *rsa.PublicKey {
+	split := strings.SplitN(str, "\t", 2)
+	Assert(len(split) == 2, "wrong string format for pub key")
+
+	n := new(big.Int)
+	_, ok := n.SetString(split[0], 10)
+	Assert(ok, fmt.Sprintf("'%s' is not a number", split[0]))
+
+	e := Unwrap(strconv.Atoi(split[1]))
+
+	return &rsa.PublicKey{N: n, E: e}
+}
+
 func EncryptWithPublicKey(msg []byte, pub *rsa.PublicKey) []byte {
-	hash := sha512.New()
-	ciphertext, err := rsa.EncryptOAEP(hash, rand.Reader, pub, msg, nil)
-	if err != nil {
-		log.Fatal(err)
-	}
-	return ciphertext
+	return Unwrap(rsa.EncryptPKCS1v15(rand.Reader, pub, msg))
 }
 
-// DecryptWithPrivateKey decrypts data with private key
-func DecryptWithPrivateKey(ciphertext []byte, priv *rsa.PrivateKey) []byte {
-	hash := sha512.New()
-	plaintext, err := rsa.DecryptOAEP(hash, rand.Reader, priv, ciphertext, nil)
-	if err != nil {
-		log.Fatal(err)
-	}
-	return plaintext
+func DecryptWithPrivateKey(ciphertext []byte, privateKey *rsa.PrivateKey) []byte {
+	return Unwrap(rsa.DecryptPKCS1v15(rand.Reader, privateKey, ciphertext))
 }
