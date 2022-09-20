@@ -1,11 +1,12 @@
 package main
 
-// todo: auth with id, cypher, session_time, registration
+// todo: cypher, session_time, registration, permissions?, place to keep rsa
 
 import (
 	"bufio"
 	"bytes"
 	"crypto/aes"
+	"crypto/rsa"
 	"flag"
 	"fmt"
 	"io"
@@ -21,6 +22,8 @@ import (
 var (
 	serverAddr string
 	sessionKey []byte
+	id         string
+	rsaPrivate *rsa.PrivateKey
 )
 
 func main() {
@@ -34,23 +37,24 @@ func main() {
 	Process()
 }
 
+func ReadWithHint(r *bufio.Reader, hint string) string {
+	fmt.Print(hint)
+	line, _ := r.ReadString('\n')
+	line = strings.Trim(line, "\n\t ")
+	return line
+}
+
 func Login() error {
 	r := bufio.NewReader(os.Stdin)
 
-	fmt.Print("Username: ")
-	user, _ := r.ReadString('\n')
-	user = strings.Trim(user, "\n\t ")
+	user := ReadWithHint(r, "Username: ")
+	password := ReadWithHint(r, "Password: ")
 
-	fmt.Print("Password: ")
-	password, _ := r.ReadString('\n')
-	password = strings.Trim(password, "\n\t ")
+	rsaPrivate, _ = utils.GenerateKeyPair(2048)
 
-	rsaPrivate, rsaPub := utils.GenerateKeyPair(2048)
+	body := bytes.NewBuffer(utils.PublicKeyToBytes(&rsaPrivate.PublicKey))
 
-	body := bytes.Buffer{}
-	body.Write(utils.PublicKeyToBytes(rsaPub))
-
-	req, err := http.NewRequest("GET", serverAddr+"/login", &body)
+	req, err := http.NewRequest("GET", serverAddr+"/login", body)
 	if err != nil {
 		return err
 	}
@@ -62,8 +66,10 @@ func Login() error {
 		return err
 	}
 	defer resp.Body.Close()
+
+	id = resp.Header.Get("Id")
 	body.Reset()
-	io.Copy(&body, resp.Body)
+	io.Copy(body, resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf(body.String())
@@ -79,9 +85,7 @@ func Login() error {
 func Process() {
 	r := bufio.NewReader(os.Stdin)
 	for {
-		fmt.Print("Filename: ")
-		file, _ := r.ReadString('\n')
-		file = strings.Trim(file, "\n\t ")
+		file := ReadWithHint(r, "Filename: ")
 
 		text, err := GetFile(file)
 		if err != nil {
@@ -93,7 +97,13 @@ func Process() {
 }
 
 func GetFile(file string) (string, error) {
-	resp, err := http.Get(serverAddr + "/note?name=" + file)
+	req, err := http.NewRequest("GET", serverAddr+"/note?name="+file, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Add("Id", id)
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -104,11 +114,16 @@ func GetFile(file string) (string, error) {
 		return "", err
 	}
 
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf(string(text))
+	}
+
 	ciph, err := aes.NewCipher(sessionKey)
 	if err != nil {
 		return "", err
 	}
 	dec := make([]byte, len(text))
 	ciph.Decrypt(dec, text)
+
 	return string(dec), nil
 }

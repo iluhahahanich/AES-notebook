@@ -18,17 +18,11 @@ import (
 )
 
 var (
-	port    string
-	storage map[string]struct{}
-
+	port     string
 	usersDao *utils.Dao
 
-	permissions = map[string][]string{
-		"test1": {"file0.txt", "file1.txt"},
-		"test2": {"file1.txt", "file2.txt"},
-	}
-
-	sessions = make(map[string]session)
+	storage  = make(map[string]struct{})
+	sessions = make(map[utils.UserID]session)
 )
 
 type session struct {
@@ -66,7 +60,6 @@ func IndexStorage() error {
 		return err
 	}
 
-	storage = make(map[string]struct{})
 	for _, file := range files {
 		storage[file.Name()] = struct{}{}
 	}
@@ -103,34 +96,38 @@ func HandleLogin(w http.ResponseWriter, r *http.Request) {
 	io.Copy(rsaPubStr, r.Body)
 
 	s := session{
-		user:       username[0],
+		user:       user.Name,
 		expiration: time.Now().Add(time.Minute),
 		rsaKey:     utils.BytesToPublicKey(rsaPubStr.Bytes()),
 		sessionKey: make([]byte, 16),
 	}
 	rand.Read(s.sessionKey)
-	sessions[s.user] = s
+	sessions[user.ID] = s
 
+	w.Header().Add("Id", fmt.Sprint(user.ID))
 	w.Write(utils.EncryptWithPublicKey(s.sessionKey, s.rsaKey))
-	fmt.Println(s.sessionKey)
+	w.WriteHeader(http.StatusOK)
 	return
 }
 
 func HandleNote(w http.ResponseWriter, r *http.Request) {
-	// if Auth(r) == false {
-	//	 return
-	// }
-	file := r.URL.Query().Get("name")
-	if _, ok := storage[file]; !ok {
-		fmt.Fprintf(w, "file %q not found", file)
+	idStr, ok := r.Header["Id"]
+	if !ok {
+		http.Error(w, "unauthorised", http.StatusUnauthorized)
 		return
 	}
 
-	//sessionKey := sessions[r.Header.Get("User")].sessionKey
-	sessionKey := sessions["user"].sessionKey
+	file := r.URL.Query().Get("name")
+	if _, ok := storage[file]; !ok {
+		http.Error(w, "file "+file+" not found", http.StatusBadRequest)
+		return
+	}
+
+	sessionKey := sessions[utils.ToID(idStr[0])].sessionKey
+
 	ciph, err := aes.NewCipher(sessionKey)
 	if err != nil {
-		fmt.Fprintf(w, err.Error())
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	f, _ := os.Open("data/" + file)
@@ -138,10 +135,4 @@ func HandleNote(w http.ResponseWriter, r *http.Request) {
 	enc := make([]byte, len(data))
 	ciph.Encrypt(enc, data)
 	fmt.Fprintln(w, string(enc))
-}
-
-func Auth(r *http.Request) bool {
-	sKey := r.Header["SessionKey"][0]
-	_, ok := sessions[sKey]
-	return ok
 }

@@ -3,11 +3,17 @@ package utils
 import (
 	"context"
 	"database/sql"
+	"strconv"
 
 	_ "github.com/mattn/go-sqlite3"
 )
 
 type UserID int
+
+func ToID(str string) UserID {
+	res, _ := strconv.Atoi(str)
+	return UserID(res)
+}
 
 type User struct {
 	ID       UserID
@@ -16,7 +22,8 @@ type User struct {
 }
 
 type Dao struct {
-	conn *sql.DB
+	conn   *sql.DB
+	closed chan struct{}
 }
 
 func (d Dao) Create(ctx context.Context, u *User) (id UserID, err error) {
@@ -43,6 +50,12 @@ func (d Dao) Lookup(ctx context.Context, name string) (u User, err error) {
 	return
 }
 
+func (d Dao) LookupID(ctx context.Context, id UserID) (u User, err error) {
+	conn := d.conn.QueryRowContext(ctx, "SELECT id, name, password FROM users WHERE id = $1", id)
+	err = conn.Scan(&u.ID, &u.Name, &u.Password)
+	return
+}
+
 func (d Dao) List(ctx context.Context) (users []User, err error) {
 	conn, err := d.conn.QueryContext(ctx, "SELECT id, name, password FROM users")
 	if err != nil {
@@ -65,6 +78,7 @@ func (d Dao) List(ctx context.Context) (users []User, err error) {
 }
 
 func (d Dao) Close() error {
+	close(d.closed)
 	return d.conn.Close()
 }
 
@@ -73,9 +87,16 @@ func CreateDao(ctx context.Context, dsn string) (*Dao, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	dao := &Dao{conn: conn}
+	dao.closed = make(chan struct{})
 	go func() {
-		<-ctx.Done()
-		_ = conn.Close()
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+			close(dao.closed)
+		case <-dao.closed:
+		}
 	}()
 
 	_, err = conn.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT, password TEXT)")
@@ -83,8 +104,5 @@ func CreateDao(ctx context.Context, dsn string) (*Dao, error) {
 		return nil, err
 	}
 
-	dao := &Dao{
-		conn: conn,
-	}
 	return dao, nil
 }
