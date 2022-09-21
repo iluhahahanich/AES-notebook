@@ -1,11 +1,13 @@
 package main
 
-// todo: cypher, session_time, registration, permissions?, place to keep rsa
+// RSA by hand? Does rating matter
+// todo: session_time, RSA Gen & Store
+// ECDSA instead of RSA ------- if need to implement rsa
+// registration ------- only with editing, deleting and etc
 
 import (
 	"bufio"
 	"bytes"
-	"crypto/aes"
 	"crypto/rsa"
 	"flag"
 	"fmt"
@@ -13,10 +15,11 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 
-	"../utils"
+	"../crypto"
 )
 
 var (
@@ -50,9 +53,9 @@ func Login() error {
 	user := ReadWithHint(r, "Username: ")
 	password := ReadWithHint(r, "Password: ")
 
-	rsaPrivate = utils.GenerateKey(2048)
+	rsaPrivate = crypto.GenerateKey(2048)
 
-	body := bytes.NewBufferString(utils.PublicKeyToString(&rsaPrivate.PublicKey))
+	body := bytes.NewBufferString(crypto.PublicKeyToString(&rsaPrivate.PublicKey))
 
 	req, err := http.NewRequest("GET", serverAddr+"/login", body)
 	if err != nil {
@@ -76,7 +79,7 @@ func Login() error {
 	}
 
 	log.Println("authorized")
-	sessionKey = utils.DecryptWithPrivateKey(body.Bytes(), rsaPrivate)
+	sessionKey = crypto.DecryptWithPrivateKey(body.Bytes(), rsaPrivate)
 
 	return nil
 }
@@ -91,15 +94,17 @@ func Process() {
 			fmt.Println("Failed to get a file:", err)
 			continue
 		}
-		fmt.Println("File received: \n", text)
+		fmt.Println("Data: ")
+		fmt.Println(text)
 	}
 }
 
 func GetFile(file string) (string, error) {
-	req, err := http.NewRequest("GET", serverAddr+"/note?name="+file, nil)
+	req, err := http.NewRequest("GET", serverAddr+"/file/", nil)
 	if err != nil {
 		return "", err
 	}
+	req.URL.RawQuery = url.Values{"name": {file}}.Encode()
 	req.Header.Add("Id", id)
 
 	resp, err := http.DefaultClient.Do(req)
@@ -117,12 +122,11 @@ func GetFile(file string) (string, error) {
 		return "", fmt.Errorf(string(text))
 	}
 
-	ciph, err := aes.NewCipher(sessionKey)
+	cipher, err := crypto.NewAES(sessionKey)
 	if err != nil {
 		return "", err
 	}
-	dec := make([]byte, len(text))
-	ciph.Decrypt(dec, text)
+	dec := cipher.DecryptOFB(text, sessionKey)
 
 	return string(dec), nil
 }

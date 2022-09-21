@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/aes"
 	"crypto/rsa"
 	"flag"
 	"fmt"
@@ -14,27 +13,27 @@ import (
 	"os"
 	"time"
 
-	"../utils"
+	"../crypto"
 )
 
 var (
 	port     string
-	usersDao *utils.Dao
+	usersDao *Dao
 
 	storage  = make(map[string]struct{})
-	sessions = make(map[utils.UserID]session)
+	sessions = make(map[UserID]session)
 )
 
 type session struct {
 	user       string
 	expiration time.Time
 	sessionKey []byte
-	rsaKey     *rsa.PublicKey
+	rsaPub     *rsa.PublicKey
 }
 
 func main() {
 	var err error
-	usersDao, err = utils.CreateDao(context.Background(), "server.db")
+	usersDao, err = CreateDao(context.Background(), "server.db")
 	if err != nil {
 		fmt.Println("failed to load database:", err)
 		return
@@ -49,7 +48,7 @@ func main() {
 	}
 
 	http.HandleFunc("/login", HandleLogin)
-	http.HandleFunc("/note/", HandleNote)
+	http.HandleFunc("/file/", HandleFile)
 
 	http.ListenAndServe(":"+port, nil)
 }
@@ -83,7 +82,7 @@ func HandleLogin(w http.ResponseWriter, r *http.Request) {
 
 	user, err := usersDao.Lookup(context.Background(), username[0])
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, "no such user "+username[0], http.StatusBadRequest)
 		return
 	}
 
@@ -98,41 +97,41 @@ func HandleLogin(w http.ResponseWriter, r *http.Request) {
 	s := session{
 		user:       user.Name,
 		expiration: time.Now().Add(time.Minute),
-		rsaKey:     utils.StringToPublicKey(rsaPubStr.String()),
+		rsaPub:     crypto.StringToPublicKey(rsaPubStr.String()),
 		sessionKey: make([]byte, 16),
 	}
 	rand.Read(s.sessionKey)
 	sessions[user.ID] = s
 
 	w.Header().Add("Id", fmt.Sprint(user.ID))
-	w.Write(utils.EncryptWithPublicKey(s.sessionKey, s.rsaKey))
+	w.Write(crypto.EncryptWithPublicKey(s.sessionKey, s.rsaPub))
 	w.WriteHeader(http.StatusOK)
+
 	return
 }
 
-func HandleNote(w http.ResponseWriter, r *http.Request) {
+func HandleFile(w http.ResponseWriter, r *http.Request) {
 	idStr, ok := r.Header["Id"]
 	if !ok {
 		http.Error(w, "unauthorised", http.StatusUnauthorized)
 		return
 	}
 
-	file := r.URL.Query().Get("name")
-	if _, ok := storage[file]; !ok {
-		http.Error(w, "file "+file+" not found", http.StatusBadRequest)
+	file, ok := r.URL.Query()["name"]
+	if _, ok := storage[file[0]]; !ok {
+		http.Error(w, "file "+file[0]+" not found", http.StatusBadRequest)
 		return
 	}
 
-	sessionKey := sessions[utils.ToID(idStr[0])].sessionKey
+	sessionKey := sessions[ToID(idStr[0])].sessionKey
 
-	ciph, err := aes.NewCipher(sessionKey)
+	cipher, err := crypto.NewAES(sessionKey)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	f, _ := os.Open("data/" + file)
+	f, _ := os.Open("data/" + file[0])
 	data, _ := io.ReadAll(f)
-	enc := make([]byte, len(data))
-	ciph.Encrypt(enc, data)
-	fmt.Fprintln(w, string(enc))
+	enc := cipher.EncryptOFB(data, sessionKey)
+	fmt.Fprint(w, string(enc))
 }
