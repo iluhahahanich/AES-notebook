@@ -154,20 +154,10 @@ func handleFile(w http.ResponseWriter, r *http.Request) {
 	}
 	sessionKey := sess.sessionKey
 	if sess.expireTime.Sub(time.Now()) <= 0 {
-		//rand.Read(sess.sessionKey)
-		//sess.expireTime = time.Now().Add(kSessionTime)
-		//sessions[id] = sess
-
-		//enc := crypto.EncryptWithPublicKey(sess.sessionKey, sess.rsaPub)
-		//w.Header().Add("Expired", fmt.Sprint(len(enc)))
 		w.Header().Add("Expired", "")
 		w.WriteHeader(http.StatusOK)
 		m.Unlock()
 		return
-		//if _, err = w.Write(enc); err != nil {
-		//	http.Error(w, "error while writing new session key: "+err.Error(), http.StatusBadRequest)
-		//	return
-		//}
 	}
 	m.Unlock()
 
