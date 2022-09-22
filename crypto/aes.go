@@ -33,20 +33,20 @@ func NewAES(key []byte) (*AES, error) {
 // EncryptOFB returns the cipher of OFB-mode encryption.
 // The iv must be 128bit.
 func (a *AES) EncryptOFB(in []byte, iv []byte) []byte {
-	ivTmp := make([]byte, len(iv))
-	copy(ivTmp, iv)
-	plainTmp := make([]byte, len(in))
-	copy(plainTmp, in)
+	ivTemp := make([]byte, len(iv))
+	copy(ivTemp, iv)
+	inTemp := make([]byte, len(in))
+	copy(inTemp, in)
 
 	i := 0
-	for ; i < len(plainTmp)-a.len; i += a.len {
-		a.encryptBlock(ivTmp)
-		xor(plainTmp[i:i+a.len], ivTmp)
+	for ; i < len(inTemp)-a.len; i += a.len {
+		a.encryptBlock(ivTemp)
+		xor(inTemp[i:i+a.len], ivTemp)
 	}
-	a.encryptBlock(ivTmp)
-	xor(plainTmp[i:], ivTmp)
+	a.encryptBlock(ivTemp)
+	xor(inTemp[i:], ivTemp)
 
-	return plainTmp
+	return inTemp
 }
 
 // DecryptOFB returns the plaintext of OFB-mode decryption.
@@ -55,18 +55,15 @@ func (a *AES) DecryptOFB(in []byte, iv []byte) []byte {
 	return a.EncryptOFB(in, iv)
 }
 
-// keyExpansion returns an uint32 slice presenting round keys
-// (4 uint32 for a key) in encryption. The number of round keys
-// is determined by the type of encryption. For example, 11 round
-// keys in AES-128.
 func (a *AES) keyExpansion() []uint32 {
-	var w []uint32
+	w := make([]uint32, a.nb*(a.nr+1))
 	for i := 0; i < a.nk; i++ {
-		w = append(w, binary.BigEndian.Uint32(a.key[4*i:4*i+4]))
+		w[i] = binary.BigEndian.Uint32(a.key[4*i : 4*i+4])
 	}
 	for i := a.nk; i < a.nb*(a.nr+1); i++ {
 		temp := make([]byte, 4)
 		binary.BigEndian.PutUint32(temp, w[i-1])
+
 		if i%a.nk == 0 {
 			rotWord(temp)
 			a.subBytes(temp)
@@ -74,7 +71,7 @@ func (a *AES) keyExpansion() []uint32 {
 		} else if a.nk > 6 && i%a.nk == 4 {
 			a.subBytes(temp)
 		}
-		w = append(w, w[i-a.nk]^binary.BigEndian.Uint32(temp))
+		w[i] = w[i-a.nk] ^ binary.BigEndian.Uint32(temp)
 	}
 	return w
 }

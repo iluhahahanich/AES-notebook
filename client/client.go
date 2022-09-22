@@ -1,7 +1,5 @@
 package main
 
-// RSA by hand? Does rating matter
-// todo: session_time, RSA Gen & Store
 // ECDSA instead of RSA ------- if need to implement rsa
 // registration ------- only with editing, deleting and etc
 
@@ -9,6 +7,7 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/rsa"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -24,36 +23,52 @@ import (
 
 var (
 	serverAddr string
-	sessionKey []byte
 	id         string
 	rsaPrivate *rsa.PrivateKey
+	sessionKey []byte
 )
 
+var ExpiredErr = errors.New("session expired")
+
 func main() {
-	flag.StringVar(&serverAddr, "server-addr", "http://localhost:8080", "Address to reach server.")
+	flag.StringVar(&serverAddr, "server-addr",
+		"http://localhost:8080", "Address to reach server.")
 	flag.Parse()
 
-	for err := Login(); err != nil; err = Login() {
+	r := bufio.NewReader(os.Stdin)
+
+	rsaPrivate = crypto.GenerateKey(2048)
+
+login:
+	err := login(r)
+	if err != nil {
 		fmt.Println(err, "\nTry again")
+		goto login
 	}
 
-	Process()
+process:
+	switch err = process(r); err {
+	case ExpiredErr:
+		fmt.Println(ExpiredErr)
+		goto login
+	case nil:
+		goto process
+	default:
+		fmt.Println("failed to get file: " + err.Error())
+		goto process
+	}
 }
 
-func ReadWithHint(r *bufio.Reader, hint string) string {
+func readWithHint(r *bufio.Reader, hint string) string {
 	fmt.Print(hint)
 	line, _ := r.ReadString('\n')
 	line = strings.Trim(line, "\n\t ")
 	return line
 }
 
-func Login() error {
-	r := bufio.NewReader(os.Stdin)
-
-	user := ReadWithHint(r, "Username: ")
-	password := ReadWithHint(r, "Password: ")
-
-	rsaPrivate = crypto.GenerateKey(2048)
+func login(r *bufio.Reader) error {
+	user := readWithHint(r, "Username: ")
+	password := readWithHint(r, "Password: ")
 
 	body := bytes.NewBufferString(crypto.PublicKeyToString(&rsaPrivate.PublicKey))
 
@@ -61,6 +76,7 @@ func Login() error {
 	if err != nil {
 		return err
 	}
+
 	req.Header.Add("Username", user)
 	req.Header.Add("Password", password)
 
@@ -72,7 +88,9 @@ func Login() error {
 
 	id = resp.Header.Get("Id")
 	body.Reset()
-	io.Copy(body, resp.Body)
+	if _, err = io.Copy(body, resp.Body); err != nil {
+		return err
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf(body.String())
@@ -84,22 +102,54 @@ func Login() error {
 	return nil
 }
 
-func Process() {
-	r := bufio.NewReader(os.Stdin)
-	for {
-		file := ReadWithHint(r, "Filename: ")
-
-		text, err := GetFile(file)
-		if err != nil {
-			fmt.Println("Failed to get a file:", err)
-			continue
-		}
-		fmt.Println("Data: ")
-		fmt.Println(text)
+func process(r *bufio.Reader) error {
+	str := readWithHint(r, "Type '\\gen' to regen RSA Key or filename: ")
+	if str == "\\gen" {
+		return regenRSA()
 	}
+
+	text, err := getFile(str)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("Data: ")
+	fmt.Println(text)
+
+	return nil
 }
 
-func GetFile(file string) (string, error) {
+func regenRSA() error {
+	rsaPrivate = crypto.GenerateKey(2048)
+
+	body := bytes.NewBufferString(crypto.PublicKeyToString(&rsaPrivate.PublicKey))
+
+	req, err := http.NewRequest("GET", serverAddr+"/regen", body)
+	if err != nil {
+		return err
+	}
+	req.Header.Add("Id", id)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	body.Reset()
+	if _, err = io.Copy(body, resp.Body); err != nil {
+		return err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf(body.String())
+	}
+
+	fmt.Println("RSA generated successfully")
+	return nil
+}
+
+func getFile(file string) (string, error) {
 	req, err := http.NewRequest("GET", serverAddr+"/file/", nil)
 	if err != nil {
 		return "", err
@@ -118,15 +168,20 @@ func GetFile(file string) (string, error) {
 		return "", err
 	}
 
+	if _, ok := resp.Header["Expired"]; ok {
+		return "", ExpiredErr
+	}
+
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf(string(text))
 	}
 
-	cipher, err := crypto.NewAES(sessionKey)
+	cipher, err := crypto.NewAES(sessionKey[:16])
 	if err != nil {
 		return "", err
 	}
-	dec := cipher.DecryptOFB(text, sessionKey)
+
+	dec := cipher.DecryptOFB(text, sessionKey[16:])
 
 	return string(dec), nil
 }
