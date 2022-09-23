@@ -126,10 +126,6 @@ func (a *AES) invSubBytes(state []byte) {
 	}
 }
 
-func (a *AES) shiftRow(in []byte, i int, n int) {
-	in[i], in[i+4*1], in[i+4*2], in[i+4*3] = in[i+4*(n%4)], in[i+4*((n+1)%4)], in[i+4*((n+2)%4)], in[i+4*((n+3)%4)]
-}
-
 func (a *AES) shiftRows(state []byte) {
 	a.shiftRow(state, 1, 1)
 	a.shiftRow(state, 2, 2)
@@ -142,56 +138,40 @@ func (a *AES) invShiftRows(state []byte) {
 	a.shiftRow(state, 3, 1)
 }
 
-// xtime returns the result of multiplication by x in GF(2^8).
-func xtime(in byte) byte {
-	return (in << 1) ^ (((in >> 7) & 1) * 0x1b)
-}
-
-// xtimes returns the result of multiplication by x^ts in GF(2^8).
-func xtimes(in byte, ts int) byte {
-	for ; ts > 0; ts-- {
-		in = xtime(in)
-	}
-	return in
-}
-
-// mulByte returns byte x multiplied by byte y in GF(2^8).
-func mulByte(x byte, y byte) byte {
-	return (((y >> 0) & 0x01) * xtimes(x, 0)) ^
-		(((y >> 1) & 0x01) * xtimes(x, 1)) ^
-		(((y >> 2) & 0x01) * xtimes(x, 2)) ^
-		(((y >> 3) & 0x01) * xtimes(x, 3)) ^
-		(((y >> 4) & 0x01) * xtimes(x, 4)) ^
-		(((y >> 5) & 0x01) * xtimes(x, 5)) ^
-		(((y >> 6) & 0x01) * xtimes(x, 6)) ^
-		(((y >> 7) & 0x01) * xtimes(x, 7))
-}
-
-// mulWord provides the one-column mix for the function
-// mixColumns and invMixColumns. In fact, it's a matrix
-// multiplication.
-func mulWord(x []byte, y []byte) {
-	tmp := make([]byte, 4)
-	copy(tmp, x)
-
-	x[0] = mulByte(tmp[0], y[3]) ^ mulByte(tmp[1], y[0]) ^ mulByte(tmp[2], y[1]) ^ mulByte(tmp[3], y[2])
-	x[1] = mulByte(tmp[0], y[2]) ^ mulByte(tmp[1], y[3]) ^ mulByte(tmp[2], y[0]) ^ mulByte(tmp[3], y[1])
-	x[2] = mulByte(tmp[0], y[1]) ^ mulByte(tmp[1], y[2]) ^ mulByte(tmp[2], y[3]) ^ mulByte(tmp[3], y[0])
-	x[3] = mulByte(tmp[0], y[0]) ^ mulByte(tmp[1], y[1]) ^ mulByte(tmp[2], y[2]) ^ mulByte(tmp[3], y[3])
+func (a *AES) shiftRow(in []byte, i int, n int) {
+	in[i], in[i+4*1], in[i+4*2], in[i+4*3] = in[i+4*(n%4)], in[i+4*((n+1)%4)], in[i+4*((n+2)%4)], in[i+4*((n+3)%4)]
 }
 
 func (a *AES) mixColumns(state []byte) {
-	s := []byte{0x03, 0x01, 0x01, 0x02}
+	s := []byte{0x02, 0x01, 0x01, 0x03}
 	for i := 0; i < len(state); i += 4 {
-		mulWord(state[i:i+4], s)
+		mulColumn(state[i:i+4], s)
 	}
 }
 
 func (a *AES) invMixColumns(state []byte) {
-	s := []byte{0x0b, 0x0d, 0x09, 0x0e}
+	s := []byte{0x0e, 0x09, 0x0d, 0x0b}
 	for i := 0; i < len(state); i += 4 {
-		mulWord(state[i:i+4], s)
+		mulColumn(state[i:i+4], s)
 	}
+}
+
+func mulColumn(x []byte, y []byte) {
+	x[0], x[1], x[2], x[3] =
+		mulByte(x[0], y[0])^mulByte(x[1], y[3])^mulByte(x[2], y[2])^mulByte(x[3], y[1]),
+		mulByte(x[0], y[1])^mulByte(x[1], y[0])^mulByte(x[2], y[3])^mulByte(x[3], y[1]),
+		mulByte(x[0], y[2])^mulByte(x[1], y[1])^mulByte(x[2], y[3])^mulByte(x[3], y[3]),
+		mulByte(x[0], y[0])^mulByte(x[1], y[1])^mulByte(x[2], y[2])^mulByte(x[3], y[3])
+}
+
+func mulByte(x byte, y byte) byte {
+	res := byte(0)
+	for counter := 0; counter < 8; counter++ {
+		res ^= x * (y & 1)
+		x = (x << 1) ^ ((x>>7)&1)*0x1b
+		y >>= 1
+	}
+	return res
 }
 
 func (a *AES) addRoundKey(state []byte, w []uint32) {
